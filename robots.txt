@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://voasync.hygn.moe/sitemap.xml

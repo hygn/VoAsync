@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>VoAsync - Lyrics in Sync</title>
+  <meta name="description" content="가사 자동 싱크 소프트웨어">
+  <meta name="theme-color" content="#080808">
+  <meta name="author" content="hygn">
+  <link rel="alternate" hreflang="ko" href="https://voasync.hygn.moe/?lang=ko">
+  <link rel="alternate" hreflang="en" href="https://voasync.hygn.moe/?lang=en">
+  <link rel="alternate" hreflang="ja" href="https://voasync.hygn.moe/?lang=ja">
+  <link rel="alternate" hreflang="x-default" href="https://voasync.hygn.moe/">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="VoAsync">
+  <meta property="og:url" content="https://voasync.hygn.moe/">
+  <meta property="og:title" content="VoAsync - Lyrics in Sync">
+  <meta property="og:description" content="가사 자동 싱크 소프트웨어">
+  <meta property="og:image" content="https://voasync.hygn.moe/og.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:locale" content="ko_KR">
+  <meta property="og:locale:alternate" content="en_US">
+  <meta property="og:locale:alternate" content="ja_JP">
+  <meta name="twitter:card" content="summary_large_image">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "WebApplication",
+    "name": "VoAsync",
+    "url": "https://voasync.hygn.moe/",
+    "description": "Automatic lyrics sync software",
+    "applicationCategory": "MultimediaApplication",
+    "operatingSystem": "Any (web browser)",
+    "browserRequirements": "Requires JavaScript and WebAssembly",
+    "inLanguage": ["ko", "en", "ja"],
+    "isAccessibleForFree": true,
+    "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+    "author": { "@type": "Person", "name": "hygn", "url": "https://hygn.moe" },
+    "isBasedOn": { "@type": "SoftwareApplication", "name": "Mixlyzer", "url": "https://github.com/hygn/Mixlyzer" },
+    "image": "https://voasync.hygn.moe/og.png"
+  }
+  </script>
+  <link rel="stylesheet" href="style.css">
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <header class="top">
+    <h1 class="brand">VoAsync</h1>
+    <div class="langs" id="langs"></div>
+  </header>
+
+  <main>
+    <section class="inputs" id="inputs">
+      <label class="drop" id="songDrop">
+        <input type="file" id="songInput" accept="audio/*,.flac,.m4a,.opus,.ogg,.wav,.mp3,.aac">
+        <span class="drop-title" data-i18n="song">노래</span>
+        <span class="drop-hint" id="songName" data-i18n="songHint">끌어 놓거나 눌러서 선택</span>
+      </label>
+
+      <div class="lyrics">
+        <div class="lyrics-bar">
+          <span class="label" data-i18n="lyrics">가사</span>
+          <button type="button" id="lyricsOpen" class="ghost" data-i18n="openFile">파일 열기</button>
+          <input type="file" id="lyricsInput" accept=".lrc,.txt,text/plain" hidden>
+          <span class="hint" id="lyricsInfo"></span>
+        </div>
+        <textarea id="lyricsText" spellcheck="false" data-i18n-placeholder="paste" placeholder="가사 붙여넣기"></textarea>
+      </div>
+
+      <div class="actions">
+        <button type="button" id="start" class="primary" disabled data-i18n="start">싱크 맞추기</button>
+        <span class="hint" id="dictNote" hidden></span>
+      </div>
+    </section>
+
+    <section class="progress" id="progress" hidden>
+      <div class="bar"><div class="fill" id="progressFill"></div></div>
+      <ol class="stages" id="stages">
+        <li data-stage="decode" data-i18n="decode">디코드</li>
+        <li data-stage="read" data-i18n="read">가사 읽기</li>
+        <li data-stage="spectra" data-i18n="spectra">스펙트럼</li>
+        <li data-stage="vocal" data-i18n="vocal">보컬 분석</li>
+        <li data-stage="align" data-i18n="align">정렬</li>
+      </ol>
+    </section>
+
+    <section class="error" id="error" hidden></section>
+
+    <section class="result" id="result" hidden>
+      <div class="transport">
+        <button type="button" id="play" class="play" data-i18n-aria="play" aria-label="재생">▶</button>
+        <span class="time" id="time">0:00</span>
+        <input type="range" id="seek" min="0" max="1" step="0.01" value="0" data-i18n-aria="position" aria-label="위치">
+        <span class="time" id="duration">0:00</span>
+        <div class="seg" id="mode" role="group" data-i18n-aria="display" aria-label="표시">
+          <button type="button" data-mode="fill" class="on" data-i18n="fill">채우기</button>
+          <button type="button" data-mode="char" data-i18n="char">글자</button>
+        </div>
+        <button type="button" id="click" class="toggle" aria-pressed="false" data-i18n="click">클릭</button>
+        <button type="button" id="again" class="ghost" data-i18n="again">다른 곡</button>
+      </div>
+
+      <div class="karaoke" id="karaoke">
+        <div class="k-line k-prev" id="kPrev"></div>
+        <div class="k-line k-now" id="kNow"></div>
+        <div class="k-line k-next" id="kNext"></div>
+        <div class="k-line k-next2" id="kNext2"></div>
+      </div>
+      <div class="activity" id="activity"><canvas id="activityCanvas"></canvas></div>
+
+      <div class="downloads">
+        <span class="label" data-i18n="download">내려받기</span>
+        <button type="button" data-file="karaoke" class="primary" data-i18n="karaokeLrc">노래방 LRC</button>
+        <button type="button" data-file="lines">LRC</button>
+        <button type="button" data-file="ass">ASS</button>
+        <button type="button" data-file="srt">SRT</button>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div>
+      <span data-i18n="local">모든 데이터는 사용자 기기에서 처리됩니다.</span>
+      <span data-i18n="disclaimer">정렬 결과는 정확하지 않을 수 있으며, 후리가나 표시가 틀릴 수 있습니다.</span>
+      <a href="THIRD_PARTY_NOTICES.txt" target="_blank" rel="noopener" data-i18n="licenses">라이선스</a>
+    </div>
+    <div>
+      <span>created by hygn (<a href="https://hygn.moe" target="_blank" rel="noopener">hygn.moe</a>)</span>
+      <span><span data-i18n="spinoffPre"></span><a href="https://github.com/hygn/Mixlyzer" target="_blank" rel="noopener">Mixlyzer</a><span data-i18n="spinoffPost">에서 파생된 프로젝트입니다.</span></span>
+    </div>
+  </footer>
+</body>
+</html>

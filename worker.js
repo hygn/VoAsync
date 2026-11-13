@@ -4,8 +4,8 @@
 // analysis' heavy parts (REPET's background, the vocal network) run on helper workers, a frame range each, as many as
 // the device has cores for (alone where there are none).
 
-import { gz } from "./store.js?v=54cf8befbf3c";
-import { compile, instantiate } from "./wasm.js?v=54cf8befbf3c";
+import { gz } from "./store.js?v=787b40e8b116";
+import { compile, instantiate } from "./wasm.js?v=787b40e8b116";
 
 let module = null; // the compiled engine, shared with the helpers
 let engine = null;
@@ -79,7 +79,7 @@ async function prepare(lyrics) {
 
 class Helper {
   constructor() {
-    this.worker = new Worker("helper.js?v=54cf8befbf3c", { type: "module" });
+    this.worker = new Worker("helper.js?v=787b40e8b116", { type: "module" });
     this.next = 0;
     this.waiting = new Map();
     this.worker.onmessage = (e) => {

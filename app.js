@@ -3,10 +3,10 @@
 // or lit a character at a time) and written out as files. The song plays through Web Audio, so the clicks (each
 // mora's first sound, a line's first a fifth up, as the desktop app's) are scheduled on the music's own clock.
 
-import { apply, LANGS, t } from "./i18n.js?v=54cf8befbf3c";
-import { ass, lineEnd, lineStart, lrcKaraoke, lrcLines, position, srt, stamp, tagsOf, units, wipe } from "./lyrics.js?v=54cf8befbf3c";
-import { MainView } from "./mainview.js?v=54cf8befbf3c";
-import { dictionary, storeDictionary } from "./store.js?v=54cf8befbf3c";
+import { apply, LANGS, t } from "./i18n.js?v=787b40e8b116";
+import { ass, lineEnd, lineStart, lrcKaraoke, lrcLines, position, srt, stamp, tagsOf, units, wipe } from "./lyrics.js?v=787b40e8b116";
+import { MainView } from "./mainview.js?v=787b40e8b116";
+import { dictionary, storeDictionary } from "./store.js?v=787b40e8b116";
 
 const $ = (id) => document.getElementById(id);
 
@@ -54,6 +54,7 @@ const store = (key, value) => {
 };
 let mode = stored("voasync.mode", "fill");
 let clicksOn = stored("voasync.click", "0") === "1";
+let waveOn = stored("voasync.wave", "1") === "1"; // the main view shown (off: nothing drawn or asked for)
 
 // ---- inputs --------------------------------------------------------------------------------------------------
 
@@ -295,7 +296,7 @@ let scratchReady = null;
 function scratchSetup() {
   if (!scratchReady) {
     scratchReady = context()
-      .audioWorklet.addModule("scratch.js?v=54cf8befbf3c")
+      .audioWorklet.addModule("scratch.js?v=787b40e8b116")
       .then(() => {
         scratchNode = new AudioWorkletNode(ac, "scratch", { numberOfInputs: 0, outputChannelCount: [2] });
         scratchNode.connect(music);
@@ -387,8 +388,16 @@ function setClicks(on) {
   }
 }
 
+function setWave(on) {
+  waveOn = on;
+  store("voasync.wave", on ? "1" : "0");
+  $("waveToggle").setAttribute("aria-pressed", String(on));
+  $("mainview").hidden = !on;
+}
+
 for (const b of $("mode").children) b.addEventListener("click", () => setMode(b.dataset.mode));
 $("click").addEventListener("click", () => setClicks(!clicksOn));
+$("waveToggle").addEventListener("click", () => setWave(!waveOn));
 
 // ---- running -------------------------------------------------------------------------------------------------
 
@@ -450,7 +459,7 @@ async function start() {
   progressAt = {};
   progress("decode", 0);
   lyricsSource = $("lyricsText").value;
-  if (!worker) worker = new Worker("worker.js?v=54cf8befbf3c", { type: "module" });
+  if (!worker) worker = new Worker("worker.js?v=787b40e8b116", { type: "module" });
   let playback;
   worker.onmessage = async (e) => {
     const m = e.data;
@@ -656,7 +665,7 @@ function frame() {
       $("time").textContent = shownTime;
     }
     drawCursor(t);
-    view.draw(t);
+    if (waveOn) view.draw(t);
   }
   requestAnimationFrame(frame);
 }
@@ -761,6 +770,7 @@ function show(res, again = false) {
   shown = -2;
   setMode(mode);
   setClicks(clicksOn);
+  setWave(waveOn);
   updatePlay();
   drawActivity();
 }

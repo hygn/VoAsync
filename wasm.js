@@ -3,9 +3,9 @@
 
 export async function compile() {
   try {
-    return await WebAssembly.compileStreaming(fetch("voasync.wasm?v=54cf8befbf3c"));
+    return await WebAssembly.compileStreaming(fetch("voasync.wasm?v=787b40e8b116"));
   } catch {
-    return WebAssembly.compile(await (await fetch("voasync.wasm?v=54cf8befbf3c")).arrayBuffer());
+    return WebAssembly.compile(await (await fetch("voasync.wasm?v=787b40e8b116")).arrayBuffer());
   }
 }
 

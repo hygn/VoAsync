@@ -43,8 +43,8 @@
     "image": "https://voasync.hygn.moe/og.png"
   }
   </script>
-  <link rel="stylesheet" href="style.css?v=54cf8befbf3c">
-  <script type="module" src="app.js?v=54cf8befbf3c"></script>
+  <link rel="stylesheet" href="style.css?v=787b40e8b116">
+  <script type="module" src="app.js?v=787b40e8b116"></script>
 </head>
 <body>
   <header class="top">
@@ -101,11 +101,12 @@
           <button type="button" data-mode="char" data-i18n="char">글자</button>
         </div>
         <button type="button" id="click" class="toggle" aria-pressed="false" data-i18n="click">클릭</button>
+        <button type="button" id="waveToggle" class="toggle" aria-pressed="true" data-i18n="wave">파형</button>
         <button type="button" id="again" class="ghost" data-i18n="again">다른 곡</button>
       </div>
 
       <div class="activity" id="activity"><canvas id="activityCanvas"></canvas></div>
-      <div class="mainview"><canvas id="mainCanvas"></canvas></div>
+      <div class="mainview" id="mainview"><canvas id="mainCanvas"></canvas></div>
       <div class="karaoke" id="karaoke">
         <div class="k-line k-prev" id="kPrev"></div>
         <div class="k-line k-now" id="kNow"></div>

@@ -1,7 +1,7 @@
 // A helper of the engine's worker: an instance of the same module computing frame ranges (REPET's background, the
 // network's outputs) while the others compute theirs. Each message answered with its id (and its bytes, or an error).
 
-import { instantiate } from "./wasm.js?v=54cf8befbf3c";
+import { instantiate } from "./wasm.js?v=787b40e8b116";
 
 let engine = null;
 

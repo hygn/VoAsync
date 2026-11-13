@@ -3,9 +3,10 @@
 // or lit a character at a time) and written out as files. The song plays through Web Audio, so the clicks (each
 // mora's first sound, a line's first a fifth up, as the desktop app's) are scheduled on the music's own clock.
 
-import { apply, LANGS, t } from "./i18n.js";
-import { ass, lineEnd, lineStart, lrcKaraoke, lrcLines, position, srt, tagsOf, units, wipe } from "./lyrics.js";
-import { dictionary, storeDictionary } from "./store.js";
+import { apply, LANGS, t } from "./i18n.js?v=db0294526e53";
+import { ass, lineEnd, lineStart, lrcKaraoke, lrcLines, position, srt, stamp, tagsOf, units, wipe } from "./lyrics.js?v=db0294526e53";
+import { MainView } from "./mainview.js?v=db0294526e53";
+import { dictionary, storeDictionary } from "./store.js?v=db0294526e53";
 
 const $ = (id) => document.getElementById(id);
 
@@ -32,6 +33,10 @@ let song = null; // File
 let result = null; // the engine's alignment
 let lines = []; // its lines: wipe segments, start, end, each character's start
 let lyricsSource = "";
+let monoPcm = null; // the song at 22050 Hz, mono: the main view's waveform, the scratch's record
+let scrubbing = false; // the overview or the position bar dragged (Mixlyzer's scrub: the clicks muted)
+let scratch = null; // the main view held: {wasPlaying, t} (Mixlyzer's scratch: the record under the hand)
+let realigning = false;
 
 const stored = (key, fallback) => {
   try {
@@ -149,6 +154,7 @@ const clock = () => (playing ? ac.currentTime - startedAt : pausedAt);
 
 /** The song's time now heard (the clock less the output's latency). */
 function heard() {
+  if (scratch) return scratch.t;
   if (!playing) return pausedAt;
   return Math.max(0, clock() - (ac.outputLatency || 0) - (ac.baseLatency || 0));
 }
@@ -165,7 +171,7 @@ function firstOnset(t) {
 }
 
 function schedule() {
-  if (!playing || !clicksOn || !clickBuf) return;
+  if (!playing || !clicksOn || !clickBuf || scrubbing) return;
   const horizon = clock() + 0.25;
   while (nextClick < onsets.length && onsets[nextClick].t < horizon) {
     const o = onsets[nextClick++];
@@ -259,12 +265,101 @@ function updatePlay() {
   $("play").setAttribute("aria-label", t(playing ? "pause" : "play"));
 }
 
-const mmss = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, "0")}`;
+/** m:ss.mmm */
+function mmss(t) {
+  const ms = Math.round(Math.max(0, t) * 1000);
+  const s = Math.floor(ms / 1000);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}.${String(ms % 1000).padStart(3, "0")}`;
+}
+
+// ---- scrub (the overview, the position bar) and scratch (the main view) ------------------------------------------
+
+function scrubBegin() {
+  scrubbing = true;
+  cancelClicks();
+}
+
+function scrubEnd() {
+  if (!scrubbing) return;
+  scrubbing = false;
+  if (playing) {
+    nextClick = firstOnset(clock());
+    schedule();
+  }
+}
+
+let scratchNode = null;
+let scratchReady = null;
+
+/** The scratch's worklet, once per audio context (none where the browser has no AudioWorklet: a silent scratch). */
+function scratchSetup() {
+  if (!scratchReady) {
+    scratchReady = context()
+      .audioWorklet.addModule("scratch.js?v=db0294526e53")
+      .then(() => {
+        scratchNode = new AudioWorkletNode(ac, "scratch", { numberOfInputs: 0, outputChannelCount: [2] });
+        scratchNode.connect(music);
+      })
+      .catch(() => (scratchNode = null));
+  }
+  return scratchReady;
+}
+
+/** Now on the output's clock (s): the time a sample played now is heard. */
+function outputTime() {
+  const ts = ac.getOutputTimestamp ? ac.getOutputTimestamp() : null;
+  if (ts && ts.performanceTime) return ts.contextTime + (performance.now() - ts.performanceTime) / 1000;
+  return ac.currentTime - (ac.outputLatency || 0) - (ac.baseLatency || 0);
+}
+
+function scratchBegin(secPerPx) {
+  if (!buffer) return;
+  const t = heard();
+  scratch = { wasPlaying: playing, t };
+  if (playing) {
+    playing = false;
+    stopSource();
+  }
+  pausedAt = t;
+  ac.resume();
+  const latency = (ac.baseLatency || 0) + (ac.outputLatency || 0);
+  scratchNode?.port.postMessage({ type: "begin", pos: t * RATE, at: outputTime(), latency, pixel: secPerPx * RATE });
+}
+
+function scratchMove(t) {
+  if (!scratch) return;
+  scratch.t = t;
+  scratchNode?.port.postMessage({ type: "to", pos: t * RATE, at: outputTime() });
+}
+
+function scratchEnd(t) {
+  if (!scratch) return;
+  scratchNode?.port.postMessage({ type: "end" });
+  const was = scratch.wasPlaying;
+  scratch = null;
+  pausedAt = Math.max(0, Math.min(t, duration()));
+  if (was) play();
+  else updatePlay();
+}
+
+const view = new MainView($("mainCanvas"), {
+  windowSec: +stored("voasync.window", "6"),
+  onScratchBegin: scratchBegin,
+  onScratchMove: scratchMove,
+  onScratchEnd: scratchEnd,
+});
+view.onWindow = (sec) => store("voasync.window", String(sec));
 
 let dragging = false;
 $("play").addEventListener("click", () => (playing ? pause() : play()));
-$("seek").addEventListener("pointerdown", () => (dragging = true));
-$("seek").addEventListener("pointerup", () => (dragging = false));
+$("seek").addEventListener("pointerdown", () => {
+  dragging = true;
+  scrubBegin();
+});
+$("seek").addEventListener("pointerup", () => {
+  dragging = false;
+  scrubEnd();
+});
 $("seek").addEventListener("input", (e) => seek(+e.target.value));
 document.addEventListener("keydown", (e) => {
   if (e.code !== "Space" || $("result").hidden || /^(TEXTAREA|INPUT|BUTTON)$/.test(e.target.tagName)) return;
@@ -354,13 +449,21 @@ async function start() {
   progressAt = {};
   progress("decode", 0);
   lyricsSource = $("lyricsText").value;
-  if (!worker) worker = new Worker("worker.js", { type: "module" });
+  if (!worker) worker = new Worker("worker.js?v=db0294526e53", { type: "module" });
   let playback;
   worker.onmessage = async (e) => {
     const m = e.data;
     if (m.type === "progress") progress(m.stage, m.fraction);
     else if (m.type === "read") {
       if (m.japanese) storeInBackground(); // while the song is analysed
+    } else if (m.type === "done" && realigning) {
+      realigning = false;
+      $("realign").disabled = false;
+      show(m.result, true);
+    } else if (m.type === "error" && realigning) {
+      realigning = false;
+      $("realign").disabled = false;
+      $("editNote").textContent = m.message === "E_NO_LINES" ? t("errNoLines") : `${t("errAlign")}: ${m.message}`;
     } else if (m.type === "done") {
       console.debug("voasync steps (ms)", JSON.stringify(m.times));
       progress("align", 1);
@@ -386,7 +489,9 @@ async function start() {
     return;
   }
   progress("decode", 1);
-  worker.postMessage({ type: "audio", pcm }, [pcm.buffer]);
+  monoPcm = pcm;
+  const copy = pcm.slice();
+  worker.postMessage({ type: "audio", pcm: copy }, [copy.buffer]);
 }
 
 const JAPANESE = /[぀-ヿ㐀-鿿]/;
@@ -413,6 +518,8 @@ $("again").addEventListener("click", () => {
   $("result").hidden = true;
   $("progress").hidden = true;
   $("inputs").hidden = false;
+  document.querySelector(".lyrics").appendChild($("lyricsText"));
+  $("editNote").textContent = "";
 });
 
 // ---- the result ----------------------------------------------------------------------------------------------
@@ -423,7 +530,7 @@ let nowState = [];
 let nowRuby = []; // the current line's reading spans (a mora each)
 let rubyState = [];
 
-const KANJI = /[㐀-鿿豈-﫿々〆ヶ]/;
+const KANJI = /[⺀-⿟㐀-鿿豈-﫿々〆ヶ]/;
 
 /** A line's characters as spans, a kanji word's reading above it (ruby) a span per mora: [chars, ruby], each
  * ruby span with its mora's index. */
@@ -435,7 +542,8 @@ function renderLine(el, line) {
     const [a, b] = line.moras[i].span;
     let j = i;
     while (j < line.moras.length && line.moras[j].span[0] === a && line.moras[j].span[1] === b) j++;
-    if (KANJI.test(chars.slice(a, b).join(""))) groups.set(a, [b, i, j]);
+    const read = line.moras.slice(i, j).some((m) => m.label !== "＊"); // a wildcard: no reading to show
+    if (read && KANJI.test(chars.slice(a, b).join(""))) groups.set(a, [b, i, j]);
     i = j;
   }
   const spans = [];
@@ -540,6 +648,7 @@ function frame() {
     if (!dragging) $("seek").value = String(t);
     $("time").textContent = mmss(t);
     drawCursor(t);
+    view.draw(t);
   }
   requestAnimationFrame(frame);
 }
@@ -569,30 +678,47 @@ function drawCursor(t) {
   if (!cv._base) return;
   const g = cv.getContext("2d");
   g.putImageData(cv._base, 0, 0);
+  const x = (s) => (s / duration()) * cv.width;
+  g.strokeStyle = "rgba(255, 255, 255, 0.35)";
+  g.lineWidth = Math.max(1, devicePixelRatio);
+  g.strokeRect(x(t - view.windowSec / 2), 0.5, Math.max(2, x(view.windowSec) - x(0)), cv.height - 1);
   g.fillStyle = "#ffffff";
-  g.fillRect((t / duration()) * cv.width, 0, Math.max(1, devicePixelRatio), cv.height);
+  g.fillRect(x(t), 0, Math.max(1, devicePixelRatio), cv.height);
 }
 
 // a line or a character pressed: the song a second before it (as the desktop app's karaoke)
 const jump = (t) => seek(Math.max(0, t - 1));
 for (const [id, offset] of [["kPrev", -1], ["kNext", 1], ["kNext2", 2]]) {
-  $(id).addEventListener("click", () => lines[shown + offset] && jump(lines[shown + offset].start));
+  $(id).addEventListener("click", () => {
+    if (!lines[shown + offset]) return;
+    toLine(shown + offset);
+    jump(lines[shown + offset].start);
+  });
 }
 $("kNow").addEventListener("click", (e) => {
   const line = lines[shown];
   if (!line) return;
+  toLine(shown);
   const c = nowSpans.indexOf(e.target);
   const m = e.target.dataset?.mora;
   jump(m !== undefined ? line.segs[+m][0] : c >= 0 ? line.chars.starts[c] : line.start);
 });
 
-$("activity").addEventListener("click", (e) => {
-  if (!result) return;
-  const r = e.currentTarget.getBoundingClientRect();
-  seek(((e.clientX - r.left) / r.width) * duration());
+const overviewAt = (e) => {
+  const r = $("activity").getBoundingClientRect();
+  return Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * duration();
+};
+$("activity").addEventListener("pointerdown", (e) => {
+  if (!result || e.button !== 0) return;
+  $("activity").setPointerCapture(e.pointerId);
+  scrubBegin();
+  seek(overviewAt(e));
 });
+$("activity").addEventListener("pointermove", (e) => scrubbing && seek(overviewAt(e)));
+$("activity").addEventListener("pointerup", scrubEnd);
+$("activity").addEventListener("pointercancel", scrubEnd);
 
-function show(res) {
+function show(res, again = false) {
   result = res;
   lines = res.lines.map((l) => {
     const line = { ...l, segs: wipe(l), start: lineStart(l), end: lineEnd(l) };
@@ -601,9 +727,16 @@ function show(res) {
   });
   onsets = lines.flatMap((l) => l.moras.map((m, i) => ({ t: m.cons ?? m.start, accent: i === 0 })));
   onsets.sort((a, b) => a.t - b.t);
-  pausedAt = 0;
+  if (!again) {
+    pausedAt = 0;
+    view.setTrack(monoPcm, RATE, duration());
+    scratchSetup().then(() => scratchNode?.port.postMessage({ type: "load", pcm: monoPcm, rate: RATE }));
+  }
+  view.setLyrics(lines, res.activity, res.hop);
   $("progress").hidden = true;
   $("result").hidden = false;
+  if ($("lyricsText").parentElement !== $("editWrap")) $("editWrap").appendChild($("lyricsText")); // kept where it is
+  paintEditor();
   $("seek").max = String(duration());
   $("duration").textContent = mmss(duration());
   shown = -2;
@@ -612,6 +745,127 @@ function show(res) {
   updatePlay();
   drawActivity();
 }
+
+// ---- the lyrics edited over the result: a line marked at the time heard, then aligned again ----------------------
+
+const bodyOf = (raw) =>
+  raw
+    .replace(/\[\d+:\d+(?:[.:]\d+)?\]/g, "")
+    .replace(/<\d+:\d+(?:[.:]\d+)?>/g, "")
+    .trim();
+
+/** Each shown line's row in the editor (the lyrics' order; a text met again, its next row). */
+function sourceRows() {
+  const rows = $("lyricsText").value.split("\n").map(bodyOf);
+  const out = [];
+  let from = 0;
+  for (const l of lines) {
+    let i = rows.indexOf(l.text, from);
+    if (i < 0) i = rows.indexOf(l.text);
+    out.push(i);
+    if (i >= 0) from = i + 1;
+  }
+  return out;
+}
+
+const caretRow = () => {
+  const ta = $("lyricsText");
+  return ta.value.slice(0, ta.selectionStart).split("\n").length - 1;
+};
+
+let painted = "";
+
+/** The editor's backdrop: its rows as the textarea lays them out, the caret's row highlighted (and outlined in the
+ * main view). */
+function paintEditor() {
+  const ta = $("lyricsText");
+  const back = $("editBack");
+  if (ta.parentElement !== $("editWrap")) return;
+  const at = caretRow();
+  const key = `${at}\u0000${ta.clientWidth}\u0000${ta.value}`;
+  if (key !== painted) {
+    painted = key;
+    back.replaceChildren(
+      ...ta.value.split("\n").map((r, i) => {
+        const d = document.createElement("div");
+        d.textContent = r || "\u00a0";
+        if (i === at) d.className = "at";
+        return d;
+      }),
+    );
+    view.focusLine = sourceRows().indexOf(at);
+  }
+  back.style.width = `${ta.clientWidth}px`;
+  back.style.height = `${ta.clientHeight}px`;
+  back.scrollTop = ta.scrollTop;
+}
+
+/** The caret to an editor row's start, the row scrolled into sight. */
+function caretTo(i) {
+  const ta = $("lyricsText");
+  const rows = ta.value.split("\n");
+  let pos = 0;
+  for (let k = 0; k < i && k < rows.length; k++) pos += rows[k].length + 1;
+  ta.setSelectionRange(pos, pos);
+  paintEditor();
+  const row = $("editBack").children[i];
+  if (row && (row.offsetTop < ta.scrollTop || row.offsetTop + row.offsetHeight > ta.scrollTop + ta.clientHeight)) {
+    ta.scrollTop = row.offsetTop - ta.clientHeight / 3;
+    paintEditor();
+  }
+}
+
+/** The caret to a shown line's row. */
+function toLine(k) {
+  const i = sourceRows()[k];
+  if (i >= 0) caretTo(i);
+}
+
+/** The caret's line stamped with the time heard (its stamps before replaced); the caret on to the next line. */
+function markLine() {
+  const ta = $("lyricsText");
+  const text = ta.value;
+  const pos = ta.selectionStart;
+  const a = text.lastIndexOf("\n", pos - 1) + 1;
+  let b = text.indexOf("\n", pos);
+  if (b < 0) b = text.length;
+  const body = text.slice(a, b).replace(/^(\s*\[\d+:\d+(?:[.:]\d+)?\])+\s*/, "");
+  const line = `[${stamp(heard())}]${body}`;
+  ta.setRangeText(line, a, b, "end");
+  const v = ta.value;
+  let next = a + line.length + 1;
+  while (next < v.length) {
+    const e = v.indexOf("\n", next);
+    if (v.slice(next, e < 0 ? v.length : e).trim()) break;
+    if (e < 0) next = v.length;
+    else next = e + 1;
+  }
+  next = Math.min(next, v.length);
+  caretTo(v.slice(0, next).split("\n").length - 1);
+}
+
+function realign() {
+  if (!worker || !result || realigning) return;
+  realigning = true;
+  $("realign").disabled = true;
+  $("editNote").textContent = "";
+  lyricsSource = $("lyricsText").value;
+  worker.postMessage({ type: "realign", lyrics: lyricsSource });
+}
+
+$("mark").addEventListener("click", markLine);
+$("toLine").addEventListener("click", () => toLine(Math.max(0, shown)));
+$("realign").addEventListener("click", realign);
+// over the result, anywhere: Ctrl+Enter a marker, Ctrl+Shift+Enter the caret to the line shown
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Enter" || !(e.ctrlKey || e.metaKey) || $("result").hidden) return;
+  e.preventDefault();
+  if (e.shiftKey) toLine(Math.max(0, shown));
+  else markLine();
+});
+for (const type of ["input", "keyup", "click", "select", "scroll"]) $("lyricsText").addEventListener(type, paintEditor);
+document.addEventListener("selectionchange", () => document.activeElement === $("lyricsText") && paintEditor());
+new ResizeObserver(() => paintEditor()).observe($("lyricsText"));
 
 function baseName() {
   return song ? song.name.replace(/\.[^.]+$/, "") : "lyrics";

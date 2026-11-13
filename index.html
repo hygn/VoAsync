@@ -43,8 +43,8 @@
     "image": "https://voasync.hygn.moe/og.png"
   }
   </script>
-  <link rel="stylesheet" href="style.css">
-  <script type="module" src="app.js"></script>
+  <link rel="stylesheet" href="style.css?v=db0294526e53">
+  <script type="module" src="app.js?v=db0294526e53"></script>
 </head>
 <body>
   <header class="top">
@@ -74,6 +74,7 @@
         <button type="button" id="start" class="primary" disabled data-i18n="start">싱크 맞추기</button>
         <span class="hint" id="dictNote" hidden></span>
       </div>
+      <p class="guide" data-i18n="guide">어긋나는 줄 앞에 [01:23.45]처럼 시작 시간을 붙이면 그 시간에 맞춰 정렬합니다. 몇 줄만 붙여도 됩니다.</p>
     </section>
 
     <section class="progress" id="progress" hidden>
@@ -103,13 +104,14 @@
         <button type="button" id="again" class="ghost" data-i18n="again">다른 곡</button>
       </div>
 
+      <div class="activity" id="activity"><canvas id="activityCanvas"></canvas></div>
+      <div class="mainview"><canvas id="mainCanvas"></canvas></div>
       <div class="karaoke" id="karaoke">
         <div class="k-line k-prev" id="kPrev"></div>
         <div class="k-line k-now" id="kNow"></div>
         <div class="k-line k-next" id="kNext"></div>
         <div class="k-line k-next2" id="kNext2"></div>
       </div>
-      <div class="activity" id="activity"><canvas id="activityCanvas"></canvas></div>
 
       <div class="downloads">
         <span class="label" data-i18n="download">내려받기</span>
@@ -117,6 +119,18 @@
         <button type="button" data-file="lines">LRC</button>
         <button type="button" data-file="ass">ASS</button>
         <button type="button" data-file="srt">SRT</button>
+      </div>
+
+      <div class="editor" id="editor">
+        <div class="lyrics-bar">
+          <span class="label" data-i18n="lyrics">가사</span>
+          <button type="button" id="toLine" class="ghost" data-i18n="toLine" title="Ctrl+Shift+Enter">현재 줄로</button>
+          <button type="button" id="mark" class="ghost" data-i18n="mark" title="Ctrl+Enter">마커 넣기</button>
+          <button type="button" id="realign" class="primary" data-i18n="realign">다시 맞추기</button>
+          <span class="hint" id="editNote"></span>
+        </div>
+        <div class="edit-wrap" id="editWrap"><div class="edit-back" id="editBack" aria-hidden="true"></div></div>
+        <p class="guide" id="guideEdit" data-i18n="guideEdit">어긋나는 줄에 커서를 두고 그 줄이 시작될 때 마커 넣기(Ctrl+Enter)를 누른 뒤 다시 맞추세요.</p>
       </div>
     </section>
   </main>

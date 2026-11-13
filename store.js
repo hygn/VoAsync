@@ -30,7 +30,7 @@ async function response(path) {
   const c = await open();
   const hit = c && (await c.match(url));
   if (hit) return hit;
-  const r = await fetch(url);
+  const r = await fetch(`${url}?v=${(await version()).data}`); // a browser's cache never mixes two data versions
   if (!r.ok) throw new Error(`${path}: ${r.status}`);
   if (c) await c.put(url, r.clone()).catch(() => {});
   return r;

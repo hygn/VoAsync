@@ -4,8 +4,8 @@
 // analysis' heavy parts (REPET's background, the vocal network) run on helper workers, a frame range each, as many as
 // the device has cores for (alone where there are none).
 
-import { gz } from "./store.js";
-import { compile, instantiate } from "./wasm.js";
+import { gz } from "./store.js?v=db0294526e53";
+import { compile, instantiate } from "./wasm.js?v=db0294526e53";
 
 let module = null; // the compiled engine, shared with the helpers
 let engine = null;
@@ -79,7 +79,7 @@ async function prepare(lyrics) {
 
 class Helper {
   constructor() {
-    this.worker = new Worker("helper.js", { type: "module" });
+    this.worker = new Worker("helper.js?v=db0294526e53", { type: "module" });
     this.next = 0;
     this.waiting = new Map();
     this.worker.onmessage = (e) => {
@@ -183,6 +183,18 @@ onmessage = async (e) => {
     t0 = performance.now();
     prepared = prepare(m.lyrics);
     prepared.catch(fail);
+  } else if (m.type === "realign") {
+    // the lyrics edited over the result: read again and aligned on the analysis already made
+    t0 = performance.now();
+    try {
+      await prepare(m.lyrics);
+      post("align", 0);
+      const result = JSON.parse(engine.call("cmd_align"));
+      mark("align");
+      postMessage({ type: "done", result, times });
+    } catch (err) {
+      fail(err);
+    }
   } else if (m.type === "audio") {
     try {
       await prepared;

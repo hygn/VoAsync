@@ -3,10 +3,10 @@
 // or lit a character at a time) and written out as files. The song plays through Web Audio, so the clicks (each
 // mora's first sound, a line's first a fifth up, as the desktop app's) are scheduled on the music's own clock.
 
-import { apply, LANGS, t } from "./i18n.js?v=db0294526e53";
-import { ass, lineEnd, lineStart, lrcKaraoke, lrcLines, position, srt, stamp, tagsOf, units, wipe } from "./lyrics.js?v=db0294526e53";
-import { MainView } from "./mainview.js?v=db0294526e53";
-import { dictionary, storeDictionary } from "./store.js?v=db0294526e53";
+import { apply, LANGS, t } from "./i18n.js?v=454e48567f22";
+import { ass, lineEnd, lineStart, lrcKaraoke, lrcLines, position, srt, stamp, tagsOf, units, wipe } from "./lyrics.js?v=454e48567f22";
+import { MainView } from "./mainview.js?v=454e48567f22";
+import { dictionary, storeDictionary } from "./store.js?v=454e48567f22";
 
 const $ = (id) => document.getElementById(id);
 
@@ -295,7 +295,7 @@ let scratchReady = null;
 function scratchSetup() {
   if (!scratchReady) {
     scratchReady = context()
-      .audioWorklet.addModule("scratch.js?v=db0294526e53")
+      .audioWorklet.addModule("scratch.js?v=454e48567f22")
       .then(() => {
         scratchNode = new AudioWorkletNode(ac, "scratch", { numberOfInputs: 0, outputChannelCount: [2] });
         scratchNode.connect(music);
@@ -449,7 +449,7 @@ async function start() {
   progressAt = {};
   progress("decode", 0);
   lyricsSource = $("lyricsText").value;
-  if (!worker) worker = new Worker("worker.js?v=db0294526e53", { type: "module" });
+  if (!worker) worker = new Worker("worker.js?v=454e48567f22", { type: "module" });
   let playback;
   worker.onmessage = async (e) => {
     const m = e.data;

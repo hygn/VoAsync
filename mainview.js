@@ -4,7 +4,7 @@
 // lines; the lyrics' own line times (an LRC's) dashed. The left edge on whole pixels, so everything moves together.
 // The wheel steps the width; held and dragged, the record is under the hand (a scratch, Mixlyzer's main view).
 
-import { CHUNK_SEC, frameMsFor, renderChunk } from "./wave.js?v=db0294526e53";
+import { CHUNK_SEC, frameMsFor, renderChunk } from "./wave.js?v=454e48567f22";
 
 const WINDOWS = [1, 3, 6, 9, 12, 24];
 const RULER_H = 18;
@@ -40,7 +40,8 @@ export class MainView {
   constructor(canvas, { onScratchBegin, onScratchMove, onScratchEnd, windowSec }) {
     this.canvas = canvas;
     this.g = canvas.getContext("2d");
-    this.windowSec = WINDOWS.includes(windowSec) ? windowSec : 6;
+    this.windowSec = windowSec >= WINDOWS[0] && windowSec <= WINDOWS[WINDOWS.length - 1] ? windowSec : 6;
+    this.pinch = null;
     this.onWindow = null;
     this.mono = null;
     this.sr = 0;
@@ -63,34 +64,79 @@ export class MainView {
       (e) => {
         if (!this.duration) return;
         e.preventDefault();
-        const i = WINDOWS.indexOf(this.windowSec);
-        const next = WINDOWS[Math.max(0, Math.min(WINDOWS.length - 1, i + (e.deltaY < 0 ? -1 : 1)))];
-        if (next !== this.windowSec) {
-          this.windowSec = next;
-          this.onWindow?.(next);
-        }
+        // a step closer in (up) or further out (down), from the steps around the width (a pinch's may lie between)
+        const next =
+          e.deltaY < 0
+            ? ([...WINDOWS].reverse().find((w) => w < this.windowSec - 1e-6) ?? WINDOWS[0])
+            : (WINDOWS.find((w) => w > this.windowSec + 1e-6) ?? WINDOWS[WINDOWS.length - 1]);
+        this.setWindow(next);
       },
       { passive: false },
     );
+    // the mouse held: a scratch at once (Mixlyzer's); a finger: once it has moved TOUCH_SLOP px (a second finger
+    // first: a pinch, no scratch); two fingers: a pinch (apart, closer in; together, further out)
+    const TOUCH_SLOP = 6;
+    const touches = new Map(); // pointer id -> its x, y
+    const spread = () => {
+      const [a, b] = [...touches.values()];
+      return Math.hypot(a.x - b.x, a.y - b.y);
+    };
+    const endScratch = (x) => {
+      const g = this.grab;
+      this.grab = null;
+      if (g?.started) onScratchEnd(Math.max(0, Math.min(this.duration, g.t - (x - g.x) * g.secPerPx)));
+    };
     canvas.addEventListener("pointerdown", (e) => {
       if (e.button !== 0 || !this.duration) return;
       canvas.setPointerCapture(e.pointerId);
+      touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (touches.size === 2) {
+        endScratch(this.grab?.last ?? 0);
+        this.pinch = { spread: Math.max(1, spread()), windowSec: this.windowSec };
+        return;
+      }
+      if (touches.size > 2 || this.pinch) return;
       const secPerPx = this.windowSec / canvas.clientWidth;
-      this.grab = { x: e.clientX, t: this.t ?? 0, secPerPx };
-      onScratchBegin(secPerPx);
+      const started = e.pointerType !== "touch";
+      this.grab = { x: e.clientX, last: e.clientX, id: e.pointerId, t: this.t ?? 0, secPerPx, started };
+      if (started) onScratchBegin(secPerPx);
     });
     canvas.addEventListener("pointermove", (e) => {
-      if (!this.grab) return;
-      onScratchMove(this.handAt(e.clientX));
+      if (!touches.has(e.pointerId)) return;
+      touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      const g = this.grab;
+      if (this.pinch && touches.size === 2) {
+        this.setWindow((this.pinch.windowSec * this.pinch.spread) / Math.max(1, spread()));
+      } else if (g && e.pointerId === g.id) {
+        if (!g.started) {
+          if (Math.abs(e.clientX - g.x) < TOUCH_SLOP) return;
+          g.started = true;
+          g.x = e.clientX; // the record taken from here: no jump by the slop
+          g.t = this.t ?? g.t;
+          onScratchBegin(g.secPerPx);
+        }
+        g.last = e.clientX;
+        onScratchMove(this.handAt(e.clientX));
+      }
     });
     const release = (e) => {
-      if (!this.grab) return;
-      const t = this.handAt(e.clientX);
-      this.grab = null;
-      onScratchEnd(t);
+      touches.delete(e.pointerId);
+      if (this.pinch) {
+        if (!touches.size) this.pinch = null; // once all are lifted, the next touch scratches again
+        return;
+      }
+      if (this.grab && e.pointerId === this.grab.id) endScratch(e.clientX);
     };
     canvas.addEventListener("pointerup", release);
     canvas.addEventListener("pointercancel", release);
+  }
+
+  /** The view's width (s): 1-24, a wheel's step or anything between (a pinch). */
+  setWindow(sec) {
+    const w = Math.max(WINDOWS[0], Math.min(WINDOWS[WINDOWS.length - 1], sec));
+    if (w === this.windowSec) return;
+    this.windowSec = w;
+    this.onWindow?.(Math.round(w * 100) / 100);
   }
 
   /** The time under the hand: the record moves with it (dragged right, the song goes back). */

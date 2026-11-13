@@ -4,8 +4,8 @@
 // analysis' heavy parts (REPET's background, the vocal network) run on helper workers, a frame range each, as many as
 // the device has cores for (alone where there are none).
 
-import { gz } from "./store.js?v=454e48567f22";
-import { compile, instantiate } from "./wasm.js?v=454e48567f22";
+import { gz } from "./store.js?v=54cf8befbf3c";
+import { compile, instantiate } from "./wasm.js?v=54cf8befbf3c";
 
 let module = null; // the compiled engine, shared with the helpers
 let engine = null;
@@ -79,7 +79,7 @@ async function prepare(lyrics) {
 
 class Helper {
   constructor() {
-    this.worker = new Worker("helper.js?v=454e48567f22", { type: "module" });
+    this.worker = new Worker("helper.js?v=54cf8befbf3c", { type: "module" });
     this.next = 0;
     this.waiting = new Map();
     this.worker.onmessage = (e) => {
@@ -208,8 +208,23 @@ onmessage = async (e) => {
       const result = JSON.parse(engine.call("cmd_align"));
       mark("align");
       postMessage({ type: "done", result, times });
+      engine.samples("cmd_wave_load", m.pcm); // the page's waveform drawn from it (wave)
     } catch (err) {
       fail(err);
+    }
+  } else if (m.type === "wave") {
+    // a second of the page's waveform: its span, size and RGBA rows (engine/src/wave.rs)
+    try {
+      const out = engine.bytes("cmd_wave", m.chunk, m.frameMs, m.height);
+      const dv = new DataView(out.buffer, out.byteOffset, 24);
+      const rgba = out.slice(24);
+      postMessage(
+        { type: "wave", key: m.key, start: dv.getFloat64(0, true), end: dv.getFloat64(8, true),
+          width: dv.getUint32(16, true), height: dv.getUint32(20, true), rgba },
+        [rgba.buffer],
+      );
+    } catch {
+      postMessage({ type: "wave", key: m.key, failed: true });
     }
   }
 };

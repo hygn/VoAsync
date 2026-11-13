@@ -3,10 +3,10 @@
 // or lit a character at a time) and written out as files. The song plays through Web Audio, so the clicks (each
 // mora's first sound, a line's first a fifth up, as the desktop app's) are scheduled on the music's own clock.
 
-import { apply, LANGS, t } from "./i18n.js?v=454e48567f22";
-import { ass, lineEnd, lineStart, lrcKaraoke, lrcLines, position, srt, stamp, tagsOf, units, wipe } from "./lyrics.js?v=454e48567f22";
-import { MainView } from "./mainview.js?v=454e48567f22";
-import { dictionary, storeDictionary } from "./store.js?v=454e48567f22";
+import { apply, LANGS, t } from "./i18n.js?v=54cf8befbf3c";
+import { ass, lineEnd, lineStart, lrcKaraoke, lrcLines, position, srt, stamp, tagsOf, units, wipe } from "./lyrics.js?v=54cf8befbf3c";
+import { MainView } from "./mainview.js?v=54cf8befbf3c";
+import { dictionary, storeDictionary } from "./store.js?v=54cf8befbf3c";
 
 const $ = (id) => document.getElementById(id);
 
@@ -33,7 +33,7 @@ let song = null; // File
 let result = null; // the engine's alignment
 let lines = []; // its lines: wipe segments, start, end, each character's start
 let lyricsSource = "";
-let monoPcm = null; // the song at 22050 Hz, mono: the main view's waveform, the scratch's record
+let monoPcm = null; // the song at 22050 Hz, mono: the scratch's record (the worker draws the waveform)
 let scrubbing = false; // the overview or the position bar dragged (Mixlyzer's scrub: the clicks muted)
 let scratch = null; // the main view held: {wasPlaying, t} (Mixlyzer's scratch: the record under the hand)
 let realigning = false;
@@ -295,7 +295,7 @@ let scratchReady = null;
 function scratchSetup() {
   if (!scratchReady) {
     scratchReady = context()
-      .audioWorklet.addModule("scratch.js?v=454e48567f22")
+      .audioWorklet.addModule("scratch.js?v=54cf8befbf3c")
       .then(() => {
         scratchNode = new AudioWorkletNode(ac, "scratch", { numberOfInputs: 0, outputChannelCount: [2] });
         scratchNode.connect(music);
@@ -347,6 +347,7 @@ const view = new MainView($("mainCanvas"), {
   onScratchBegin: scratchBegin,
   onScratchMove: scratchMove,
   onScratchEnd: scratchEnd,
+  requestChunk: (m) => worker?.postMessage({ type: "wave", ...m }),
 });
 view.onWindow = (sec) => store("voasync.window", String(sec));
 
@@ -449,11 +450,12 @@ async function start() {
   progressAt = {};
   progress("decode", 0);
   lyricsSource = $("lyricsText").value;
-  if (!worker) worker = new Worker("worker.js?v=454e48567f22", { type: "module" });
+  if (!worker) worker = new Worker("worker.js?v=54cf8befbf3c", { type: "module" });
   let playback;
   worker.onmessage = async (e) => {
     const m = e.data;
-    if (m.type === "progress") progress(m.stage, m.fraction);
+    if (m.type === "wave") view.putChunk(m);
+    else if (m.type === "progress") progress(m.stage, m.fraction);
     else if (m.type === "read") {
       if (m.japanese) storeInBackground(); // while the song is analysed
     } else if (m.type === "done" && realigning) {
@@ -600,6 +602,8 @@ function lineAt(t) {
   return k;
 }
 
+let lastTime = "";
+
 function frame() {
   if (!$("result").hidden && lines.length) {
     const t = heard();
@@ -645,19 +649,29 @@ function frame() {
         if (rubyState[r] !== state) nowRuby[r].className = `ch ${(rubyState[r] = state)}`;
       }
     }
-    if (!dragging) $("seek").value = String(t);
-    $("time").textContent = mmss(t);
+    const shownTime = mmss(t);
+    if (shownTime !== lastTime) {
+      lastTime = shownTime;
+      if (!dragging) $("seek").value = String(t);
+      $("time").textContent = shownTime;
+    }
     drawCursor(t);
     view.draw(t);
   }
   requestAnimationFrame(frame);
 }
 
+const overviewDpr = () => Math.min(2, devicePixelRatio || 1);
+
 function drawActivity() {
   const cv = $("activityCanvas");
-  const w = (cv.width = cv.clientWidth * devicePixelRatio);
-  const h = (cv.height = cv.clientHeight * devicePixelRatio);
-  const g = cv.getContext("2d");
+  const dpr = overviewDpr();
+  const w = (cv.width = Math.round(cv.clientWidth * dpr));
+  const h = (cv.height = Math.round(cv.clientHeight * dpr));
+  const base = document.createElement("canvas");
+  base.width = w;
+  base.height = h;
+  const g = base.getContext("2d");
   g.clearRect(0, 0, w, h);
   const act = result.activity;
   g.fillStyle = "#234a72";
@@ -669,21 +683,26 @@ function drawActivity() {
     g.fillRect(x, h * (1 - m), 1, h * m);
   }
   g.fillStyle = "#ffb000";
-  for (const line of lines) g.fillRect((line.start / duration()) * w, 0, Math.max(1, devicePixelRatio), h * 0.35);
-  cv._base = g.getImageData(0, 0, w, h);
+  for (const line of lines) g.fillRect((line.start / duration()) * w, 0, Math.max(1, dpr), h * 0.35);
+  cv._base = base;
+  cv._drawn = "";
 }
 
 function drawCursor(t) {
   const cv = $("activityCanvas");
   if (!cv._base) return;
+  const state = `${t}|${view.windowSec}|${cv.width}`;
+  if (cv._drawn === state) return;
+  cv._drawn = state;
   const g = cv.getContext("2d");
-  g.putImageData(cv._base, 0, 0);
+  g.drawImage(cv._base, 0, 0);
+  const dpr = overviewDpr();
   const x = (s) => (s / duration()) * cv.width;
   g.strokeStyle = "rgba(255, 255, 255, 0.35)";
-  g.lineWidth = Math.max(1, devicePixelRatio);
+  g.lineWidth = Math.max(1, dpr);
   g.strokeRect(x(t - view.windowSec / 2), 0.5, Math.max(2, x(view.windowSec) - x(0)), cv.height - 1);
   g.fillStyle = "#ffffff";
-  g.fillRect(x(t), 0, Math.max(1, devicePixelRatio), cv.height);
+  g.fillRect(x(t), 0, Math.max(1, dpr), cv.height);
 }
 
 // a line or a character pressed: the song a second before it (as the desktop app's karaoke)
@@ -729,7 +748,7 @@ function show(res, again = false) {
   onsets.sort((a, b) => a.t - b.t);
   if (!again) {
     pausedAt = 0;
-    view.setTrack(monoPcm, RATE, duration());
+    view.setTrack(duration());
     scratchSetup().then(() => scratchNode?.port.postMessage({ type: "load", pcm: monoPcm, rate: RATE }));
   }
   view.setLyrics(lines, res.activity, res.hop);

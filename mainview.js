@@ -1,10 +1,14 @@
 // The main view, as the desktop app's (app/views.py MainView, after Mixlyzer's): around the playhead (in the middle)
-// a ruler, the detail waveform (wave.js, a second a chunk, rendered nearest the playhead first within a frame's
-// budget), the vocal activity, the moras (the consonant hatched, the vowel filled, the one sounding amber) and the
+// a ruler, the detail waveform (a second a chunk, drawn by the engine's worker: engine/src/wave.rs, asked for nearest
+// the playhead first, a few at a time), the vocal activity, the moras (the consonant hatched, the vowel filled, the one sounding amber) and the
 // lines; the lyrics' own line times (an LRC's) dashed. The left edge on whole pixels, so everything moves together.
 // The wheel steps the width; held and dragged, the record is under the hand (a scratch, Mixlyzer's main view).
 
-import { CHUNK_SEC, frameMsFor, renderChunk } from "./wave.js?v=454e48567f22";
+const CHUNK_SEC = 1;
+/** The drawing frame (ms) of a view ``windowSec`` wide (Mixlyzer's close / short / long views). */
+const frameMsFor = (windowSec) => (windowSec <= 3 ? 0.5 : windowSec <= 9 ? 1 : 2);
+const MAX_DPR = 2; // a phone's 3x drawn at 2x: less to fill each frame
+const ASKED = 4; // chunks asked of the worker at once
 
 const WINDOWS = [1, 3, 6, 9, 12, 24];
 const RULER_H = 18;
@@ -15,7 +19,6 @@ const LINE_H = 22;
 const GAP = 4;
 export const VIEW_HEIGHT = RULER_H + DETAIL_H + ACT_H + GAP + MORA_H + GAP + LINE_H + GAP;
 const PLAYHEAD = "rgb(255, 200, 50)";
-const BUDGET_MS = 6; // a frame's waveform rendering
 const KEEP_SEC = 60;
 
 const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -37,14 +40,17 @@ function hatch(color, dpr) {
 }
 
 export class MainView {
-  constructor(canvas, { onScratchBegin, onScratchMove, onScratchEnd, windowSec }) {
+  constructor(canvas, { onScratchBegin, onScratchMove, onScratchEnd, requestChunk, windowSec }) {
     this.canvas = canvas;
+    this.requestChunk = requestChunk;
+    this.inflight = new Set();
+    this.gen = 0;
+    this.version = 0; // bumped by whatever changes the picture but the time
+    this.drawn = "";
     this.g = canvas.getContext("2d");
     this.windowSec = windowSec >= WINDOWS[0] && windowSec <= WINDOWS[WINDOWS.length - 1] ? windowSec : 6;
     this.pinch = null;
     this.onWindow = null;
-    this.mono = null;
-    this.sr = 0;
     this.duration = 0;
     this.cache = new Map();
     this.moras = [];
@@ -145,11 +151,26 @@ export class MainView {
     return Math.max(0, Math.min(this.duration, t));
   }
 
-  setTrack(mono, sr, duration) {
-    this.mono = mono;
-    this.sr = sr;
+  setTrack(duration) {
     this.duration = duration;
+    this.gen++;
     this.cache.clear();
+    this.inflight.clear();
+    this.version++;
+  }
+
+  /** A chunk drawn by the worker: {key, start, end, width, height, rgba} (or {key, failed}). */
+  putChunk(m) {
+    if (!this.inflight.delete(m.key)) return; // another song's
+    let canvas = null;
+    if (!m.failed && m.width) {
+      canvas = document.createElement("canvas");
+      canvas.width = m.width;
+      canvas.height = m.height;
+      canvas.getContext("2d").putImageData(new ImageData(new Uint8ClampedArray(m.rgba.buffer), m.width, m.height), 0, 0);
+    }
+    this.cache.set(m.key, { canvas, start: m.start, end: m.end });
+    this.version++;
   }
 
   /** The alignment: its lines (each with moras {label, cons, start, end} and its own time ``at``), the activity. */
@@ -162,6 +183,7 @@ export class MainView {
       ),
     );
     this.hop = hop;
+    this.version++;
     this.elided.clear();
     const n = activity.length;
     this.act = null;
@@ -188,7 +210,7 @@ export class MainView {
   }
 
   fit() {
-    const dpr = window.devicePixelRatio || 1;
+    const dpr = Math.min(MAX_DPR, window.devicePixelRatio || 1);
     const w = Math.max(1, Math.round(this.canvas.clientWidth * dpr));
     const h = Math.max(1, Math.round(VIEW_HEIGHT * dpr));
     if (this.canvas.width !== w || this.canvas.height !== h) {
@@ -205,7 +227,7 @@ export class MainView {
     return dpr;
   }
 
-  /** The chunks seen (and a view ahead), rendered within the frame's budget, nearest the playhead first. */
+  /** The chunks seen that have come (those missing asked for, nearest the playhead first, then a view ahead). */
   chunks(frameMs, left, right, t, height) {
     const last = Math.max(0, Math.ceil(this.duration / CHUNK_SEC) - 1);
     const want = [];
@@ -215,23 +237,23 @@ export class MainView {
     const seen = new Set(want);
     const ahead = [];
     for (let c = hi + 1; c <= Math.min(last, Math.floor((right + this.windowSec) / CHUNK_SEC)); c++) ahead.push(c);
-    const key = (c) => `${frameMs}|${height}|${c}`;
+    const key = (c) => `${this.gen}|${frameMs}|${height}|${c}`;
     const missing = want
-      .filter((c) => !this.cache.has(key(c)))
       .sort((a, b) => Math.abs(a + 0.5 - t) - Math.abs(b + 0.5 - t))
-      .concat(ahead.filter((c) => !this.cache.has(key(c))));
-    const t0 = performance.now();
+      .concat(ahead)
+      .filter((c) => !this.cache.has(key(c)) && !this.inflight.has(key(c)));
     for (const c of missing) {
-      if (performance.now() - t0 > BUDGET_MS) break;
-      this.cache.set(key(c), renderChunk(this.mono, this.sr, c, frameMs, height));
+      if (this.inflight.size >= ASKED || !this.requestChunk) break;
+      this.inflight.add(key(c));
+      this.requestChunk({ key: key(c), chunk: c, frameMs, height });
     }
     if (this.cache.size > 4 * (want.length + ahead.length) + 16) {
       for (const k of [...this.cache.keys()]) {
-        const [ms, h, c] = k.split("|");
+        const [, ms, h, c] = k.split("|");
         if (+ms !== frameMs || +h !== height || Math.abs(+c - t) > KEEP_SEC) this.cache.delete(k);
       }
     }
-    return want.filter((c) => this.cache.has(key(c))).map((c) => this.cache.get(key(c)));
+    return [...seen].map((c) => this.cache.get(key(c))).filter((ch) => ch?.canvas);
   }
 
   elide(k, text, width) {
@@ -260,6 +282,10 @@ export class MainView {
     const g = this.g;
     const W = this.canvas.width;
     const H = this.canvas.height;
+    // nothing changed (paused, nothing come): the picture stays
+    const state = `${t}|${this.windowSec}|${W}|${this.focusLine}|${this.version}|${this.inflight.size}`;
+    if (state === this.drawn) return;
+    this.drawn = state;
     g.fillStyle = "#000";
     g.fillRect(0, 0, W, H);
     if (!this.duration) return;
@@ -283,7 +309,7 @@ export class MainView {
     // the waveform
     const yWave = d(RULER_H);
     const hWave = d(DETAIL_H);
-    if (this.mono) {
+    {
       g.imageSmoothingEnabled = true;
       g.imageSmoothingQuality = "high";
       for (const ch of this.chunks(frameMsFor(this.windowSec), left, right, t, hWave)) {
